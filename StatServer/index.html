@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器运行状态</title>
+    <style>
+    * {margin: 0;padding: 0;box-sizing: border-box;}
+    body {font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;background-color: #f8fafc;color: #334155;line-height: 1.6;}
+    .container {max-width: 1400px;margin: 0 auto;padding: 2rem;}
+    .header {margin-bottom: 2rem;}
+    .header h1 {font-size: 2rem;font-weight: 700;color: #1e293b;margin-bottom: 0.5rem;}
+    .header p {color: #64748b;font-size: 1rem;}
+    .servers-grid {display: grid;grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));gap: 1.5rem;}
+    .server-card {background: white;border-radius: 12px;box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);border: 1px solid #e2e8f0;transition: all 0.3s ease;overflow: hidden;}
+    .server-card:hover {box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);transform: translateY(-2px);}
+    .server-card.offline {border-color: #fecaca;background-color: #fef2f2;}
+    .card-header {padding: 1.5rem 1.5rem 1rem;border-bottom: 1px solid #f1f5f9;display: flex;justify-content: between;align-items: center;}
+    .server-name {font-size: 1.25rem;font-weight: 600;color: #1e293b;display: flex;align-items: center;gap: 0.5rem;}
+    .status-badge {padding: 0.25rem 0.75rem;border-radius: 9999px;font-size: 0.75rem;font-weight: 500;margin-left: auto;}
+    .status-online {background-color: #dcfce7;color: #166534;}
+    .status-offline {background-color: #fee2e2;color: #dc2626;}
+    .card-content {padding: 1.5rem;}
+    .info-section {margin-bottom: 1.5rem;}
+    .info-section:last-child {margin-bottom: 0;}
+    .info-row {display: flex;align-items: center;gap: 0.5rem;margin-bottom: 0.75rem;font-size: 0.875rem;}
+    .info-row:last-child {margin-bottom: 0;}
+    .info-label {font-weight: 500;color: #374151;min-width: 80px;}
+    .info-value {color: #6b7280;}
+    .separator {height: 1px;background-color: #f1f5f9;margin: 1rem 0;}
+    .progress-section {margin-bottom: 1rem;}
+    .progress-header {display: flex;justify-content: space-between;align-items: center;margin-bottom: 0.5rem;font-size: 0.875rem;}
+    .progress-label {font-weight: 500;color: #374151;}
+    .progress-value {font-size: 0.75rem;color: #6b7280;}
+    .progress-bar {width: 100%;height: 8px;background-color: #f1f5f9;border-radius: 4px;overflow: hidden;}
+    .progress-fill {height: 100%;background-color: #3b82f6;border-radius: 4px;transition: width 0.3s ease;}
+    .progress-fill.high {background-color: #ef4444;}
+    .progress-fill.medium {background-color: #f59e0b;}
+    .cpu-info {font-size: 0.75rem;color: #6b7280;margin-left: 1.5rem;line-height: 1.4;}
+    .disk-item {margin-bottom: 0.75rem;}
+    .disk-item:last-child {margin-bottom: 0;}
+    .disk-path {font-size: 0.75rem;color: #6b7280;margin-bottom: 0.25rem;}
+    .stats-grid {display: grid;grid-template-columns: 1fr 1fr;gap: 1rem;font-size: 0.75rem;}
+    .stat-item {padding: 0.75rem;background-color: #f8fafc;border-radius: 6px;}
+    .stat-label {font-weight: 500;color: #374151;margin-bottom: 0.25rem;}
+    .stat-value {color: #6b7280;}
+    .ping-stats {font-size: 0.75rem;}
+    .ping-row {margin-bottom: 0.25rem;}
+    .ping-row:last-child {margin-bottom: 0;}
+    .update-time {font-size: 0.75rem;color: #9ca3af;text-align: center;padding-top: 1rem;border-top: 1px solid #f1f5f9;}
+    .icon {width: 16px;height: 16px;color: #6b7280;}
+    @media (max-width: 768px) {.container {padding: 1rem;}
+    .servers-grid {grid-template-columns: 1fr;}
+    .header h1 {font-size: 1.5rem;}
+    .stats-grid {grid-template-columns: 1fr;}
+    }
+    .loading {text-align: center;padding: 2rem;color: #6b7280;}
+    .error {text-align: center;padding: 2rem;color: #dc2626;background-color: #fef2f2;border-radius: 8px;margin: 1rem 0;}
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>服务器状态监控</h1>
+            <p>实时监控服务器运行状态和性能指标</p>
+        </div>
+
+        <div id="loading" class="loading">
+            正在加载服务器数据...
+        </div>
+
+        <div id="error" class="error" style="display: none;">
+            数据加载失败，请检查网络连接或稍后重试
+        </div>
+
+        <div id="servers-container" class="servers-grid" style="display: none;">
+            <!-- 动态生成 -->
+        </div>
+    </div>
+
+    <script>
+        // 工具函数
+        function convertKBtoGBorMB(kb, fixed = 2) {
+            const gb = kb / (1024 * 1024);
+            return gb < 1 ? `${(kb / 1024).toFixed(fixed)} MB` : `${gb.toFixed(fixed)} GB`;
+        }
+
+        function convertSeconds(sec) {
+            const days = Math.floor(sec / (24 * 60 * 60));
+            sec %= (24 * 60 * 60);
+            const hours = Math.floor(sec / (60 * 60));
+            sec %= (60 * 60);
+            const minutes = Math.floor(sec / 60);
+            const seconds = Math.floor(sec % 60);
+            return `${days}天${hours}时${minutes}分${seconds}秒`;
+        }
+
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString('zh-CN');
+        }
+
+        function maskLastSegment(ipAddress) {
+            const segments = ipAddress.split('.');
+            if (segments.length === 4) {
+                segments[3] = '*';
+                return segments.join('.');
+            }
+            return ipAddress;
+        }
+
+        function getUsagePercent(total, available) {
+            return ((total - available) / total) * 100;
+        }
+
+        function getProgressClass(percent) {
+            if (percent > 80) return 'high';
+            if (percent > 60) return 'medium';
+            return '';
+        }
+
+        // 创建服务器卡片
+        function createServerCard(id, server) {
+            const memUsagePercent = getUsagePercent(server.MemTotal, server.MemAvailable);
+            const lossRate = (server.Ping.Loss / server.Ping.Count) * 100;
+
+            return `
+                <div class="server-card ${!server.Online ? 'offline' : ''}">
+                    <div class="card-header">
+                        <div class="server-name">
+                            <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path>
+                            </svg>
+                            ${server.HostName}
+                        </div>
+                        <div class="status-badge ${server.Online ? 'status-online' : 'status-offline'}">
+                            ${server.Online ? '在线' : '离线'}
+                        </div>
+                    </div>
+
+                    <div class="card-content">
+                        <!-- 基本信息 -->
+                        <div class="info-section">
+                            <div class="info-row">
+                                <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                </svg>
+                                <span class="info-label">IP地址:</span>
+                                <span class="info-value">${maskLastSegment(server.IPAddr)}</span>
+                            </div>
+                            <div class="info-row">
+                                <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span class="info-label">运行时长:</span>
+                                <span class="info-value">${convertSeconds(server.Uptime)}</span>
+                            </div>
+                        </div>
+
+                        <div class="separator"></div>
+
+                        <!-- CPU信息 -->
+                        <div class="info-section">
+                            <div class="info-row">
+                                <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                                </svg>
+                                <span class="info-label">CPU:</span>
+                            </div>
+                            <div class="cpu-info">
+                                <div>${server.CPUModel.Name}</div>
+                                <div>${server.CoreNum} 核心 | ${server.CPUModel.Vendor}</div>
+                            </div>
+                        </div>
+
+                        <!-- 内存使用 -->
+                        <div class="progress-section">
+                            <div class="progress-header">
+                                <span class="progress-label">内存使用</span>
+                                <span class="progress-value">
+                                    ${convertKBtoGBorMB(server.MemTotal - server.MemAvailable)} / ${convertKBtoGBorMB(server.MemTotal)}
+                                </span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill ${getProgressClass(memUsagePercent)}" style="width: ${memUsagePercent.toFixed(1)}%"></div>
+                            </div>
+                            <div class="progress-value" style="margin-top: 0.25rem;">
+                                可用: ${convertKBtoGBorMB(server.MemAvailable)} | 进程: ${convertKBtoGBorMB(server.MemProc)}
+                            </div>
+                        </div>
+
+                        <!-- 磁盘使用 -->
+                        <div class="info-section">
+                            <div class="info-row">
+                                <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                                </svg>
+                                <span class="info-label">磁盘使用</span>
+                            </div>
+                            ${Object.entries(server.Disks).map(([disk, [total, available]]) => {
+                const diskUsagePercent = getUsagePercent(total, available);
+                return `
+                                    <div class="disk-item">
+                                        <div class="progress-header">
+                                            <span class="disk-path">${disk}</span>
+                                            <span class="progress-value">
+                                                ${convertKBtoGBorMB((total - available) / 1024, 0)} / ${convertKBtoGBorMB(total / 1024, 0)}
+                                            </span>
+                                        </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill ${getProgressClass(diskUsagePercent)}" style="width: ${diskUsagePercent.toFixed(1)}%"></div>
+                                        </div>
+                                    </div>
+                                `;
+            }).join('')}
+                        </div>
+
+                        <!-- 网络和负载统计 -->
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-label">
+                                    <svg t="1749016024335" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1615" width="16" height="16"><path d="M926 527.563c17.384 0 31.476-14.092 31.476-31.476S943.384 464.612 926 464.612H544v-73.543h118c17.673 0 32-14.327 32-32V129.99c0-17.673-14.327-32-32-32H362c-17.673 0-32 14.327-32 32v229.078c0 17.673 14.327 32 32 32h118v73.543H98c-17.384 0-31.476 14.092-31.476 31.476S80.616 527.563 98 527.563h143.604v72.783h-118c-17.673 0-32 14.327-32 32v229.078c0 17.673 14.327 32 32 32h300c17.673 0 32-14.327 32-32V632.347c0-17.673-14.327-32-32-32h-118v-72.783h412.228v72.783h-122.61c-17.673 0-32 14.327-32 32v229.078c0 17.673 14.327 32 32 32h300c17.673 0 32-14.327 32-32V632.347c0-17.673-14.327-32-32-32h-113.39v-72.783H926zM394 161.99h236v165.078H394V161.99z m-2.396 667.435h-236V664.347h236v165.078z m471.618 0h-236V664.347h236v165.078z" fill="#333333" p-id="1616"></path></svg>
+                                    网络
+                                </div>
+                                <div class="stat-value">
+                                    <div>
+                                        <span>↓ ${(server.Network[0] / 1024).toFixed(1)} KB/s </span>
+                                        <span>↑ ${(server.Network[1] / 1024).toFixed(1)} KB/s </span>
+                                    </div>
+                                    <div>
+                                        <span>↓ ${convertKBtoGBorMB((server.NetworkRT[0] / 1024).toFixed(1))} </span>
+                                        <span>↑ ${convertKBtoGBorMB((server.NetworkRT[1] / 1024).toFixed(1))} </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">
+                                    <svg t="1749015988966" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1749" width="16" height="16"><path d="M160 723.2C211.2 723.2 256 768 256 819.2s-44.8 96-96 96S64 876.8 64 819.2 108.8 723.2 160 723.2M160 659.2c-89.6 0-160 70.4-160 160s70.4 160 160 160S320 908.8 320 819.2 249.6 659.2 160 659.2L160 659.2z" p-id="1750"></path><path d="M512 108.8c51.2 0 96 44.8 96 96S563.2 300.8 512 300.8 416 256 416 204.8 460.8 108.8 512 108.8M512 44.8c-89.6 0-160 70.4-160 160S422.4 364.8 512 364.8s160-70.4 160-160S601.6 44.8 512 44.8L512 44.8z" p-id="1751"></path><path d="M864 723.2c51.2 0 96 44.8 96 96s-44.8 96-96 96S768 876.8 768 819.2 812.8 723.2 864 723.2M864 659.2c-89.6 0-160 70.4-160 160s70.4 160 160 160 160-70.4 160-160S953.6 659.2 864 659.2L864 659.2z" p-id="1752"></path><path d="M563.2 352C582.4 345.6 601.6 332.8 614.4 320l198.4 352c-19.2 6.4-38.4 19.2-57.6 32L563.2 352z" p-id="1753"></path><path d="M211.2 672 409.6 320c19.2 12.8 32 25.6 57.6 32L262.4 704C249.6 691.2 230.4 678.4 211.2 672z" p-id="1754"></path><path d="M313.6 857.6C320 844.8 320 832 320 819.2c0-12.8 0-19.2-6.4-32l390.4 0c0 12.8-6.4 19.2-6.4 32 0 12.8 0 19.2 6.4 32L313.6 851.2z" fill="#333333" p-id="1755"></path></svg>
+                                    负载
+                                </div>
+                                <div class="stat-value">${server.Load.join(', ')}</div>
+                            </div>
+                        </div>
+
+                        <!-- Ping统计 -->
+                        <div class="info-section">
+                            <div class="info-row">
+                                <span class="info-label">Ping统计 (${server.PingHost})</span>
+                            </div>
+                            <div class="ping-stats">
+                                <div class="ping-row">平均: ${server.Ping.Avg}ms | 当前: ${server.Ping.Now}ms</div>
+                                <div class="ping-row">范围: ${server.Ping.Min}ms - ${server.Ping.Max}ms</div>
+                                <div class="ping-row">丢包率: ${lossRate.toFixed(2)}% (${server.Ping.Loss}/${server.Ping.Count})</div>
+                            </div>
+                        </div>
+
+                        <div class="update-time">
+                            最后更新: ${formatTimestamp(server.ReportTime)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 渲染服务器列表
+        function renderServers(data) {
+            const container = document.getElementById('servers-container');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+
+            // 按在线状态排序
+            const sortedServers = Object.entries(data).sort(([, a], [, b]) => {
+                if (a.Online && !b.Online) return -1;
+                if (!a.Online && b.Online) return 1;
+                return 0;
+            });
+
+            const html = sortedServers.map(([id, server]) => createServerCard(id, server)).join('');
+
+            container.innerHTML = html;
+            loading.style.display = 'none';
+            error.style.display = 'none';
+            container.style.display = 'grid';
+        }
+
+        // 加载数据
+        function loadData() {
+            // 替换为实际的API调用
+            fetch('/?format=json')
+                .then(response => response.json())
+                .then(data => renderServers(data))
+                .catch(err => {
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('error').style.display = 'block';
+                });
+        }
+
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', function () {
+            loadData();
+            // 可选：设置定时刷新
+            setInterval(loadData, 3*1000); // 每3秒刷新一次
+        });
+    </script>
+</body>
+
+</html>
